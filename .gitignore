@@ -1,8 +1,12 @@
 weights/DLNR_SceneFlow.pth
 /Dataset1/*
+/disengage_videos/frames
+/disengage_videos/*.mp4
+/face_laser_projector/*
 
 # ---- Python ----
 __pycache__/
+*.pyc
 *.py[cod]
 *$py.class
 
