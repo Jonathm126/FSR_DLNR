@@ -1,4 +1,4 @@
-name: fsr_dlnr
+name: fsr_cv
 channels:
   - conda-forge
 dependencies:
