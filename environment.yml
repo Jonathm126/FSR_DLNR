@@ -1,8 +1,9 @@
-name: fsr_dlnr
+name: fsr_cv
 channels:
   - conda-forge
 dependencies:
   - _libgcc_mutex=0.1=conda_forge
+  - numpy==1.26.4
   - _openmp_mutex=4.5=4_kmp_llvm
   - asttokens=3.0.0=pyhd8ed1ab_1
   - bzip2=1.0.8=hda65f42_8
@@ -93,8 +94,7 @@ dependencies:
       - narwhals==2.7.0
       - nbformat==5.10.4
       - networkx==3.4.2
-      - numpy==1.26.4
-      - opencv-python==4.12.0.88
+      - opencv-python==4.11.0
       - opt-einsum==3.4.0
       - pillow==11.3.0
       - plotly==6.3.1
@@ -109,8 +109,8 @@ dependencies:
       - tensorboard-data-server==0.7.2
       - tifffile==2025.5.10
       - torch==1.12.0+cu116
-      - torchaudio==0.12.0+cu116
-      - torchvision==0.13.0+cu116
+      - torchvision==0.13.0+cu116 
+      - -f https://download.pytorch.org/whl/torch_stable.html
       - tqdm==4.67.1
       - urllib3==1.26.13
       - werkzeug==3.1.3
