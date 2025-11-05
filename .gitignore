@@ -1,5 +1,6 @@
 weights/DLNR_SceneFlow.pth
 /Dataset1/*
+/disengage_videos/images/
 /disengage_videos/frames*
 /disengage_videos/*.mp4
 /face_laser_projector/*
