@@ -1,7 +1,7 @@
 
-path: /home/jonathan/Documents/Github/FSR_DLNR/disengage_videos # root folder (no quotes)
-train: images             # can be absolute or relative
-val: images               # use same folder if no separate validation set
+path: /home/jonathan/Github/FSR_DLNR/disengage_videos
+train: images
+val: images
 
 names:
   0: chopper

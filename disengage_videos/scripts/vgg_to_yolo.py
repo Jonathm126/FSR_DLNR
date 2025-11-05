@@ -52,24 +52,24 @@ def convert_vgg_to_yolo(vgg_json_path, images_dir, output_dir, class_id=0, start
                     kps[kp_name] = (x / w, y / h, 2)  # visible
 
         # compute bbox of visible or occluded (v>0) keypoints
-        visible_points = [(x, y) for x, y, v in kps.values() if v > 0 and (x > 0 or y > 0)]
-        if visible_points:
-            xs, ys = zip(*visible_points)
+        # Compute bbox in pixel coordinates (not normalized)
+        visible_points_px = []
+        for name, (x, y, v) in kps.items():
+            if v > 0 and (x > 0 or y > 0):
+                visible_points_px.append((x * w, y * h))
+
+        if visible_points_px:
+            xs, ys = zip(*visible_points_px)
             xmin, xmax = min(xs), max(xs)
             ymin, ymax = min(ys), max(ys)
         else:
             continue  # skip if no keypoints
 
-        # normalize bbox
-        x_center = ((xmin + xmax) / 2)
-        y_center = ((ymin + ymax) / 2)
-        bbox_w = (xmax - xmin)
-        bbox_h = (ymax - ymin)
-
-        x_center /= w
-        y_center /= h
-        bbox_w /= w
-        bbox_h /= h
+        # Normalize bbox
+        x_center = (xmin + xmax) / (2 * w)
+        y_center = (ymin + ymax) / (2 * h)
+        bbox_w = (xmax - xmin) / w
+        bbox_h = (ymax - ymin) / h
 
         # Build YOLO line
         line = [class_id, x_center, y_center, bbox_w, bbox_h]
@@ -85,12 +85,15 @@ def convert_vgg_to_yolo(vgg_json_path, images_dir, output_dir, class_id=0, start
     print(f"✅ Conversion complete! YOLO keypoint labels saved to {output_dir}")
 
 if __name__ == "__main__":
-    vgg_json_path = r"C:\\Github\\FSR_DLNR\\disengage_videos\\frames_chopper_v2.json"
-    images_dir = "C:\\Github\\FSR_DLNR\\disengage_videos\\frames_chopper"
-    output_dir = "C:\\Github\\FSR_DLNR\\disengage_videos\\labels_chopper"
+    SCRIPT_DIR = Path(__file__).resolve().parent
+    BASE_DIR = SCRIPT_DIR.parent
+    vgg_json_path = BASE_DIR / "labels_vgg" / "frames_chopper_v2.json"
+    images_dir = BASE_DIR / "images"
+    output_dir = BASE_DIR / "labels"
+    
     class_id = 0
     start = 0
-    end = 10
+    end = 140
 
     convert_vgg_to_yolo(
         vgg_json_path=vgg_json_path,

@@ -1,0 +1,10 @@
+fliplr: 0.5          # horizontal flip probability
+flipud: 0.0          # vertical flip
+scale: 0.5           # image scale gain
+translate: 0.1       # translation
+shear: 0.0           # shear
+hsv_h: 0.015         # hue augmentation
+hsv_s: 0.7           # saturation
+hsv_v: 0.4           # brightness
+mosaic: 1.0          # mosaic enabled
+mixup: 0.1           # mixup probability
