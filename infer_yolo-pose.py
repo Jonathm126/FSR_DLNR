@@ -7,10 +7,11 @@ SCRIPT_DIR = Path(__file__).resolve()
 BASE_DIR = SCRIPT_DIR.parent
 video_path = BASE_DIR / "disengage_videos" / "20160211_163956_603_001.mp4"
 model_path = BASE_DIR / "runs" / "pose" / "s_640" / "weights" / "best.pt"
-out_path   = BASE_DIR / "runs" / "pose" / "val3"/ "inference_segment_left.mp4"
+out_path   = BASE_DIR / "runs" / "pose" / "val"/ "inference_segment_left.mp4"
 
 
 # --- Config ---
+pt_thresh = 0.8  # confidence threshold
 start_time = 3*60        # seconds
 end_time   = 4*60+30    # seconds
 save_out = True
@@ -62,8 +63,8 @@ while cap.isOpened() and frame_idx < end_frame:
     # ---- YOLO inference ----
     results = model.predict(
         resized_left,
-        conf    = 0.8,
-        iou     = 0.4,
+        conf    = 0.7,
+        iou     = 0.3,
         imgsz   = 640,
         device  = "cuda",
         verbose = True,
@@ -76,7 +77,7 @@ while cap.isOpened() and frame_idx < end_frame:
         for i, (pt, kp_conf) in enumerate(zip(kp_set, conf_set)):
             x, y = map(int, pt)
             if results[0].keypoints.has_visible:
-                if kp_conf > 0.5:  # visible enough
+                if kp_conf > pt_thresh:  # visible enough
                     label = f"{KP_NAMES[i]} ({kp_conf:.2f})"
                     cv2.putText(
                         annotated,

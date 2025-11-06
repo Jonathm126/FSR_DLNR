@@ -49,7 +49,9 @@ def convert_vgg_to_yolo(vgg_json_path, images_dir, output_dir, class_id=0, start
                 kp_name = attrs.get("kp_name")
                 if kp_name in KP_NAMES:
                     x, y = shape["cx"], shape["cy"]
-                    kps[kp_name] = (x / w, y / h, 2)  # visible
+                    kps[kp_name] = (x / w, y / h, 2)  # set to visible
+                else:
+                    raise ValueError('Illegal kp')
 
         # compute bbox of visible or occluded (v>0) keypoints
         # Compute bbox in pixel coordinates (not normalized)
@@ -87,13 +89,13 @@ def convert_vgg_to_yolo(vgg_json_path, images_dir, output_dir, class_id=0, start
 if __name__ == "__main__":
     SCRIPT_DIR = Path(__file__).resolve().parent
     BASE_DIR = SCRIPT_DIR.parent
-    vgg_json_path = BASE_DIR / "labels_vgg" / "frames_chopper_v2.json"
+    vgg_json_path = BASE_DIR / "labels_vgg" / "frames_chopper_v4.json" # update
     images_dir = BASE_DIR / "images"
     output_dir = BASE_DIR / "labels"
     
     class_id = 0
     start = 0
-    end = 140
+    end = 100
 
     convert_vgg_to_yolo(
         vgg_json_path=vgg_json_path,
