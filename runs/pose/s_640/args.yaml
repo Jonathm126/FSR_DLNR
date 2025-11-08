@@ -2,7 +2,7 @@ task: pose
 mode: train
 model: yolov8s-pose.pt
 data: disengage_videos/data.yaml
-epochs: 100
+epochs: 200
 time: null
 patience: 100
 batch: 8
@@ -47,7 +47,7 @@ source: null
 vid_stride: 1
 stream_buffer: false
 visualize: false
-augment: true
+augment: false
 agnostic_nms: false
 classes: null
 retina_masks: false

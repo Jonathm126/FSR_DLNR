@@ -2,43 +2,62 @@ import cv2
 from pathlib import Path
 from ultralytics import YOLO
 
-# --- Paths ---
+# ---------------------------
+# Config
+# ---------------------------
+yolo_imgsz  = 864
+target_h = 640
+model_name  = f"s_{yolo_imgsz}_occlusion-v1"
+model_chkpt = "best.pt"
+pt_thresh   = 0.85
+start_time  = 3 * 60 + 30
+end_time    = 4 * 60 + 30
+save_out    = True
+
+# ---------------------------
+# Paths
+# ---------------------------
 SCRIPT_DIR = Path(__file__).resolve()
-BASE_DIR = SCRIPT_DIR.parent
+BASE_DIR   = SCRIPT_DIR.parent
 video_path = BASE_DIR / "disengage_videos" / "20160211_163956_603_001.mp4"
-model_path = BASE_DIR / "runs" / "pose" / "s_640" / "weights" / "best.pt"
-out_path   = BASE_DIR / "runs" / "pose" / "val"/ "inference_segment_left.mp4"
+model_path = BASE_DIR / "runs" / "pose" / model_name / "weights" / model_chkpt
+out_path   = BASE_DIR / "runs" / "pose" / "infer" / f"{model_name}.mp4"
 
-
-# --- Config ---
-pt_thresh = 0.8  # confidence threshold
-start_time = 3*60        # seconds
-end_time   = 4*60+30    # seconds
-save_out = True
-
-target_height = 640       # resize target height
+# const
 KP_NAMES = ["tip", "bend_1", "bend_2", "shaft"]
+KP_COLORS = [
+    (0, 255, 0),    # tip - green
+    (0, 165, 255),  # bend_1 - orange
+    (255, 0, 0),    # bend_2 - blue
+    (180, 0, 255)   # shaft - purple/pink
+]
 
 # --- Load YOLO model ---
 model = YOLO(model_path, task = 'pose')
 
 # --- Open video ---
-cap = cv2.VideoCapture(str(video_path))
-fps = cap.get(cv2.CAP_PROP_FPS)
-width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+cap    = cv2.VideoCapture(str(video_path))
+fps    = cap.get(cv2.CAP_PROP_FPS)
+width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+mid_x = width // 2
 
 start_frame = int(start_time * fps)
 end_frame   = int(end_time * fps)
 cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
-# --- Output writer (optional) ---
+# output frame size
+target_w = int(target_h * mid_x *2 / height) # make up for X2 width compression
+
+# --- Output writer (matches model input resolution) ---
 if save_out:
+    print(f"Output frame size: ({target_w}, {target_h})")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out = cv2.VideoWriter(
         str(out_path),
         cv2.VideoWriter_fourcc(*"mp4v"),
         fps,
-        (1136, target_height),  # output width will be ~2×640 after resize
+        (target_w, target_h),
     )
 
 # --- Process frames ---
@@ -48,55 +67,37 @@ while cap.isOpened() and frame_idx < end_frame:
     if not ret:
         break
 
-    # ---- Split stereo frame ----
-    mid_x = width // 2
-    left_frame = frame[:, :mid_x]  # use left camera only
+    # ---- Split stereo frame and resize ----
+    left_frame = cv2.resize(frame[:, :mid_x], (target_w, target_h))
 
-    # ---- Resize ----
-    aspect_ratio = mid_x / height
-    target_width = int(target_height * aspect_ratio)
-    resized_left = cv2.resize(left_frame, (target_width, target_height))
-
-    # ---- Duplicate horizontally (X2 width) ----
-    resized_left = cv2.resize(resized_left, (target_width * 2, target_height))
-
-    # ---- YOLO inference ----
+    # ---- YOLO inference (auto-resize to imgsz internally) ----
     results = model.predict(
-        resized_left,
-        conf    = 0.7,
+        left_frame,
+        conf    = pt_thresh,
         iou     = 0.3,
-        imgsz   = 640,
+        imgsz   = yolo_imgsz, # width dimention of the model
         device  = "cuda",
-        verbose = True,
+        verbose = False,
     )
-    annotated = results[0].plot()
+    annotated = results[0].orig_img.copy()
 
-    # ---- Draw keypoint names (only visible) ----
-    # ---- Draw keypoint names + confidence (only visible) ----
-    for kp_set, conf_set in zip(results[0].keypoints.xy, getattr(results[0].keypoints, 'conf', [])):
-        for i, (pt, kp_conf) in enumerate(zip(kp_set, conf_set)):
-            x, y = map(int, pt)
-            if results[0].keypoints.has_visible:
-                if kp_conf > pt_thresh:  # visible enough
-                    label = f"{KP_NAMES[i]} ({kp_conf:.2f})"
-                    cv2.putText(
-                        annotated,
-                        label,
-                        (x + 5, y - 5),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        (0, 255, 0),
-                        1,
-                    )
-            else:
-                # If model doesn't output confidences, just draw name
+    # ---- Draw keypoints (only visible) ----
+    for kp_set, conf_set in zip(results[0].keypoints.xy, results[0].keypoints.conf):
+            for i, (pt, kp_conf) in enumerate(zip(kp_set, conf_set)):
+                if kp_conf < pt_thresh:
+                    continue
+
+                x, y = map(int, pt)
+                color = KP_COLORS[i % len(KP_COLORS)]
+                cv2.circle(annotated, (x, y), 4, color, -1)
+                label = f"{KP_NAMES[i]} ({kp_conf:.2f})"
                 cv2.putText(
                     annotated,
-                    KP_NAMES[i],
+                    label,
                     (x + 5, y - 5),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0, 255, 0),
+                    0.45,
+                    color,
                     1,
                 )
     

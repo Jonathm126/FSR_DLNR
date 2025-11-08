@@ -3,6 +3,7 @@ path: /home/jonathan/Github/FSR_DLNR/disengage_videos
 train: images
 val: images
 
+nc: 1 
 names:
   0: chopper
 

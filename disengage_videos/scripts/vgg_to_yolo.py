@@ -39,8 +39,8 @@ def convert_vgg_to_yolo(vgg_json_path, images_dir, output_dir, class_id=0, start
         with Image.open(img_path) as im:
             w, h = im.size
 
-        # default all keypoints to occluded (v=1)
-        kps = {name: (0.0, 0.0, 1) for name in KP_NAMES}
+        # default all keypoints to missing (v=0)
+        kps = {name: (0.0, 0.0, 0) for name in KP_NAMES}
 
         for region in regions:
             shape = region.get("shape_attributes", {})
@@ -89,13 +89,13 @@ def convert_vgg_to_yolo(vgg_json_path, images_dir, output_dir, class_id=0, start
 if __name__ == "__main__":
     SCRIPT_DIR = Path(__file__).resolve().parent
     BASE_DIR = SCRIPT_DIR.parent
-    vgg_json_path = BASE_DIR / "labels_vgg" / "frames_chopper_v4.json" # update
+    vgg_json_path = BASE_DIR / "labels_vgg" / "frames_chopper_v6.json" # update
     images_dir = BASE_DIR / "images"
     output_dir = BASE_DIR / "labels"
     
     class_id = 0
-    start = 0
-    end = 100
+    start = None
+    end = None
 
     convert_vgg_to_yolo(
         vgg_json_path=vgg_json_path,

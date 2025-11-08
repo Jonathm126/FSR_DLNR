@@ -33,14 +33,42 @@ for label_path in sorted(labels_dir.glob("*.txt")):
     cv2.putText(img, label_text, (x1 + 2, y1 - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
 
     # Keypoints
+    invisible_points = []  # collect invisible keypoints for this image
     for i in range(0, len(kps), 3):
         x, y, v = kps[i:i+3]
-        color = (0, 0, 255) if v == 2 else (0, 165, 255)
+        kp_name = KP_NAMES[i // 3]
         cx, cy = int(x * w), int(y * h)
-        if v > 0:
+        
+        if v == 2:
+            color = (0, 0, 255) if v == 2 else (0, 165, 255)
             cv2.circle(img, (cx, cy), 4, color, -1)
-            cv2.putText(img, KP_NAMES[i // 3], (cx+5, cy-5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+            cv2.putText(
+                img,
+                f"{kp_name} ({int(v)})",  # show name + v value
+                (cx + 5, cy - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                color,
+                1
+            )
+        else:
+            invisible_points.append(kp_name)
+    
+    # After drawing all points, print invisible ones (if any)
+    if invisible_points:
+        text = f"Invisible: {', '.join(invisible_points)}"
+        y0 = 25  # vertical offset from top
+        cv2.rectangle(img, (5, 5), (5 + len(text) * 7, y0 + 15), (0, 0, 0), -1)  # background box
+        cv2.putText(
+            img,
+            text,
+            (10, y0 + 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 0, 255),
+            1,
+        )
+
     cv2.imshow(f"Labels Only - {img_path.name}", img)
     key = cv2.waitKey(0)
     cv2.destroyAllWindows()  # close window before showing the next one
