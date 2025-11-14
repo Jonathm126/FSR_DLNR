@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import open3d as o3d
 from PIL import Image
+from scipy import stats
 import plotly.graph_objects as go
 
 # ---------------------------
@@ -144,6 +145,30 @@ def to_o3d(points, colors=None):
     if colors is not None:
         pcd.colors = o3d.utility.Vector3dVector(colors.astype(np.float64))
     return pcd
+
+def keep_largest_cluster(pcd, eps, min_points):
+    """
+    Keep only the largest connected cluster in a point cloud.
+    
+    eps: radius for DBSCAN (same scene units as your voxel)
+    min_points: minimum neighbors for a point to be a core point
+    """
+    if len(pcd.points) == 0:
+        return pcd
+
+    labels = np.array(
+        pcd.cluster_dbscan(eps=eps, min_points=min_points, print_progress=False)
+    )
+
+    # Remove noise (label = -1)
+    valid = labels >= 0
+    if np.sum(valid) == 0:
+        return pcd  # fallback
+
+    largest_label = stats.mode(labels[valid])[0]
+    indices = np.where(labels == largest_label)[0]
+
+    return pcd.select_by_index(indices)
 
 def downsample_and_denoise(pcd, voxel, nb_neighbors, std_ratio):
     """voxel in scene units (depends on Q); tune as needed."""
@@ -314,6 +339,7 @@ def run_batch(
         pcd = downsample_and_denoise(pcd, voxel=voxel_down,
                                     nb_neighbors=stat_nb_neighbors,
                                     std_ratio=stat_std_ratio)
+        pcd = keep_largest_cluster(pcd, eps = voxel_down, min_points = 1000)
         # Save per-view cloud
         if save_dir is not None:
             o3d.io.write_point_cloud(
@@ -360,10 +386,11 @@ def run_batch(
 # Entry point
 # ---------------------------
 if __name__ == "__main__":
-    folder = r"C:\\Github\\FSR_DLNR\\face_laser_projector\\no_markers-09_11"
-    q_path = r"C:\\Github\\FSR_DLNR\\face_laser_projector\\disp_to_depth_mat.npy"
+    ROOT = Path(__file__).resolve().parents[0]
+    folder = ROOT / "face_laser_projector" / "no_markers-09_11"
+    q_path = ROOT / "face_laser_projector" / "disp_to_depth_mat.npy"
 
-      # TUNE these to your scene scale (units come from Q). Start conservative:
+    # TUNE these to your scene scale (units come from Q). Start conservative:
     results = run_batch(
         folder            = folder,
         save_dir          = "recon_out",   # where to save
