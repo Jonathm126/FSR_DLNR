@@ -1,20 +1,14 @@
 from pathlib import Path
 import cv2
 import numpy as np
+import open3d as o3d
 from PIL import Image
 import plotly.graph_objects as go
-
-# --- Optional dependencies ---
-try:
-    import open3d as o3d
-    O3D_OK = True
-except Exception:
-    O3D_OK = False
 
 # ---------------------------
 # Visualization helpers
 # ---------------------------
-def visualize_disparity_combined(disp, ref_img, valid_mask=None, show=True):
+def visualize_disparity(disp, ref_img, valid_mask=None, show=True):
     """Normalize disparity on valid values and show side-by-side with reference image."""
     if valid_mask is None:
         valid_mask = np.isfinite(disp)
@@ -115,56 +109,43 @@ def make_sgbm(min_disp, max_disp, block_size, uniqueness, speckle_win, speckle_r
         uniquenessRatio=uniqueness,
         speckleWindowSize=speckle_win,
         speckleRange=speckle_range,
-        mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY
+        mode=3
     )
     return sgbm
 
-def disparity_to_points(disparity_f32, img_ref, Q, valid_mask,
-                        z_clip=None, remove_nan_inf=True, flip_z=True):
-    """Back-project disparity to 3D points and build colors array."""
-
-    pts3d = cv2.reprojectImageTo3D(disparity_f32, Q, handleMissingValues=True)  # meters/scene units per Q
+def disparity_to_points(disp, img, Q, valid_mask, z_clip=None, flip_z=False):
+    "Projects disparity image to 3d points, returns points and point colors"
+    pts3d = cv2.reprojectImageTo3D(disp, Q, handleMissingValues=True)
     if flip_z:
-        pts3d[..., 2] *= -1  # match your previous orientation if needed
+        pts3d[..., 2] *= -1
 
-    # Build colors
-    if img_ref.ndim == 2:
-        colors = np.repeat(img_ref[..., None], 3, axis=2) / 255.0
+    if img.ndim == 2:
+        colors = np.repeat(img[..., None], 3, axis=2) / 255.0
     else:
-        # OpenCV images are BGR -> convert to RGB in [0,1]
-        colors = cv2.cvtColor(img_ref, cv2.COLOR_BGR2RGB) / 255.0
+        colors = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) / 255.0
 
-    # Flatten + filter
-    flat_mask = valid_mask.flatten()
-    points = pts3d.reshape(-1, 3)[flat_mask]
-    cols = colors.reshape(-1, 3)[flat_mask]
+    points = pts3d[valid_mask]
+    cols = colors[valid_mask]
 
-    # Optional z clipping to remove far junk
     if z_clip is not None:
         zmin, zmax = z_clip
         keep = (points[:, 2] > zmin) & (points[:, 2] < zmax)
         points, cols = points[keep], cols[keep]
 
-    # Remove NaN/inf
-    if remove_nan_inf:
-        finite = np.isfinite(points).all(axis=1)
-        points, cols = points[finite], cols[finite]
-
-    return points, cols
+    finite = np.isfinite(points).all(axis=1)
+    return points[finite], cols[finite]
 
 # ---------------------------
 # Open3D utilities
 # ---------------------------
 def to_o3d(points, colors=None):
-    if not O3D_OK:
-        raise RuntimeError("Open3D is not available. Install with `pip install open3d`.")
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
     if colors is not None:
         pcd.colors = o3d.utility.Vector3dVector(colors.astype(np.float64))
     return pcd
 
-def downsample_and_denoise(pcd, voxel=0.005, nb_neighbors=20, std_ratio=2.0):
+def downsample_and_denoise(pcd, voxel, nb_neighbors, std_ratio):
     """voxel in scene units (depends on Q); tune as needed."""
     pcd_ds = pcd.voxel_down_sample(voxel_size=voxel)
     pcd_ds.estimate_normals(
@@ -314,64 +295,64 @@ def run_batch(
         disp = sgbm.compute(imgL, imgR).astype(np.float32) / 16.0
 
         # Build a validity mask (disparity > min_disp and finite)
-        valid_mask = np.isfinite(disp) & (disp > float(min_disp))
+        valid_mask = disp > float(min_disp)
 
         # visualise
         try:
-            viz, _ = visualize_disparity_combined(disp, imgL)
-            viz.save(str(save_dir / f"{lp.stem.replace('_left','')}_disp.png"))
+            viz, _ = visualize_disparity(disp, imgL, valid_mask=valid_mask, show=False)
+            if save_dir is not None:
+                viz.save(str(save_dir / f"{lp.stem.replace('_left','')}_disp.png"))
         except Exception:
             pass
+        
 
         # Reproject to 3D
-        # For coloring, use the *resized* left image (in BGR)
-        imgL_color = cv2.cvtColor(imgL, cv2.COLOR_GRAY2BGR)
-        pts, cols = disparity_to_points(
-            disp, imgL_color, Q, valid_mask=valid_mask, z_clip=z_clip, remove_nan_inf=True, flip_z=True
-        )
+        pts, cols = disparity_to_points(disp, imgL, Q, valid_mask, z_clip=z_clip, flip_z=False)
+        
+        # Convert to Open3D point cloud and clean
+        pcd = to_o3d(pts, cols)
+        pcd = downsample_and_denoise(pcd, voxel=voxel_down,
+                                    nb_neighbors=stat_nb_neighbors,
+                                    std_ratio=stat_std_ratio)
+        # Save per-view cloud
+        if save_dir is not None:
+            o3d.io.write_point_cloud(
+                str(save_dir / f"{lp.stem.replace('_left','')}.ply"),
+                pcd,
+                write_ascii=True,
+                print_progress=False
+            )
+        all_pcds.append(pcd)
 
-    #     # Convert to Open3D point cloud and clean
-    #     if O3D_OK:
-    #         pcd = to_o3d(pts, cols)
-    #         pcd = downsample_and_denoise(pcd, voxel=voxel_down,
-    #                                     nb_neighbors=stat_nb_neighbors,
-    #                                     std_ratio=stat_std_ratio)
-    #         # Save per-view cloud
-    #         o3d.io.write_point_cloud(str(save_dir / f"{lp.stem.replace('_left','')}.ply"), pcd)
-    #         all_pcds.append(pcd)
-    #     else:
-    #         # Plotly visualization for this single cloud (fallback)
-    #         plot_points_plotly(pts, cols, title=f"Cloud {i}: {lp.stem}")
+    fused = None
+    if do_registration and len(all_pcds) >= 2:
+        print("Registering point clouds...")
+        # Global multiway registration
+        transforms = multiway_register(all_pcds, voxel=max(voxel_down, 0.01))
 
-    # fused = None
-    # if O3D_OK and do_registration and len(all_pcds) >= 2:
-    #     print("Registering point clouds...")
-    #     # Global multiway registration
-    #     transforms = multiway_register(all_pcds, voxel=max(voxel_down, 0.01))
+        # Transform and merge
+        transformed = []
+        for pcd, T in zip(all_pcds, transforms):
+            p = o3d.geometry.PointCloud(pcd)  # copy
+            p.transform(T)
+            transformed.append(p)
 
-    #     # Transform and merge
-    #     transformed = []
-    #     for pcd, T in zip(all_pcds, transforms):
-    #         p = o3d.geometry.PointCloud(pcd)  # copy
-    #         p.transform(T)
-    #         transformed.append(p)
+        fused = transformed[0]
+        for p in transformed[1:]:
+            fused += p
+        fused = fused.voxel_down_sample(voxel_size=voxel_down)
+        fused, _ = fused.remove_statistical_outlier(nb_neighbors=stat_nb_neighbors, std_ratio=stat_std_ratio)
+        o3d.io.write_point_cloud(str(save_dir / "fused_registered.ply"), fused)
+        print(f"Saved fused cloud to {save_dir / 'fused_registered.ply'}")
 
-    #     fused = transformed[0]
-    #     for p in transformed[1:]:
-    #         fused += p
-    #     fused = fused.voxel_down_sample(voxel_size=voxel_down)
-    #     fused, _ = fused.remove_statistical_outlier(nb_neighbors=stat_nb_neighbors, std_ratio=stat_std_ratio)
-    #     o3d.io.write_point_cloud(str(save_dir / "fused_registered.ply"), fused)
-    #     print(f"Saved fused cloud to {save_dir / 'fused_registered.ply'}")
-
-    #     # Quick interactive 3D view (Open3D viewer)
-    #     try:
-    #         o3d.visualization.draw_geometries([fused])
-    #     except Exception:
-    #         # Fallback to Plotly if the native viewer isn't available
-    #         pts = np.asarray(fused.points)
-    #         cols = np.asarray(fused.colors) if fused.has_colors() else None
-    #         plot_points_plotly(pts, cols, title="Fused Registered Cloud")
+        # Quick interactive 3D view (Open3D viewer)
+        try:
+            o3d.visualization.draw_geometries([fused])
+        except Exception:
+            # Fallback to Plotly if the native viewer isn't available
+            pts = np.asarray(fused.points)
+            cols = np.asarray(fused.colors) if fused.has_colors() else None
+            plot_points_plotly(pts, cols, title="Fused Registered Cloud")
 
     return {"pairs": len(pairs), "saved_dir": str(save_dir), "fused": fused is not None}
 
@@ -382,24 +363,23 @@ if __name__ == "__main__":
     folder = r"C:\\Github\\FSR_DLNR\\face_laser_projector\\no_markers-09_11"
     q_path = r"C:\\Github\\FSR_DLNR\\face_laser_projector\\disp_to_depth_mat.npy"
 
-    # TUNE these to your scene scale (units come from Q). Start conservative:
+      # TUNE these to your scene scale (units come from Q). Start conservative:
     results = run_batch(
         folder            = folder,
+        save_dir          = "recon_out",   # where to save
         q_path            = q_path,
-        target_short_side = 720,
-        min_disp          = -200,
-        max_disp          = -96,           # ensure (max-min) divisible by 16 (here: 104 -> rounded to 112)
-        block_size        = 5,
-        uniqueness        = 6,
-        speckle_win       = 500,
-        speckle_range     = 2,
-        block_factor      = 1,
-        voxel_down        = 0.005,         # try 0.003..0.01 depending on scene units
-        stat_nb_neighbors = 24,
-        stat_std_ratio    = 2.0,
-        z_clip            = None,          # e.g. (-0.2, 0.6) to crop outliers along Z if needed
-        save_dir          = "recon_out",
+        target_short_side = 720,           # resie image size
+        min_disp          = -250,          # miniumum disparity
+        max_disp          = -50,           # ensure (max-min) divisible by 16 (here: 104 -> rounded to 112)
+        block_size        = 5,             # for sgbm
+        uniqueness        = 8,             # sgbm uniquness filtering
+        speckle_win       = 500,           # sgbm speckle filtering
+        speckle_range     = 2,             # sgbm speckle filtering
+        block_factor      = 1,             # 1 works best 
+        voxel_down        = 0.5,           # subsample voxel size in mm
+        stat_nb_neighbors = 24,            # number of neibours for normal computation
+        stat_std_ratio    = 2.0,           # point removal agressiveness. lower = more agressive
+        z_clip            = None,          # clip Z values (H\L) to clear noise 
         do_registration   = True
-        
     )
     print(results)
