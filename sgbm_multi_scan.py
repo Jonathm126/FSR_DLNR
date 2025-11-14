@@ -180,10 +180,16 @@ def downsample_and_denoise(pcd, voxel, nb_neighbors, std_ratio):
     return pcd_clean
 
 def compute_fpfh(pcd, voxel):
-    pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel * 2.5, max_nn=30))
+    normal_radius  = voxel * 8
+    feature_radius = voxel * 12
+
+    pcd.estimate_normals(
+        o3d.geometry.KDTreeSearchParamHybrid(radius=normal_radius, max_nn=50)
+    )
+
     return o3d.pipelines.registration.compute_fpfh_feature(
         pcd,
-        o3d.geometry.KDTreeSearchParamHybrid(radius=voxel * 5.0, max_nn=100)
+        o3d.geometry.KDTreeSearchParamHybrid(radius=feature_radius, max_nn=100)
     )
 
 def register_pair(source, target, voxel=0.01):
@@ -193,29 +199,35 @@ def register_pair(source, target, voxel=0.01):
     s_feat = compute_fpfh(s_down, voxel)
     t_feat = compute_fpfh(t_down, voxel)
 
-    distance_threshold = voxel * 1.5
+    distance_threshold = voxel * 3
 
     # Coarse global alignment (RANSAC)
     ransac = o3d.pipelines.registration.registration_ransac_based_on_feature_matching(
         s_down, t_down, s_feat, t_feat, True,
-        distance_threshold,
+        distance_threshold, 
         o3d.pipelines.registration.TransformationEstimationPointToPoint(False),
         4,
         [o3d.pipelines.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
-         o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(distance_threshold)],
-        o3d.pipelines.registration.RANSACConvergenceCriteria(4000000, 500)
+        o3d.pipelines.registration.CorrespondenceCheckerBasedOnDistance(distance_threshold)],
+        o3d.pipelines.registration.RANSACConvergenceCriteria(30000, 2000)
     )
 
-    # Refine with ICP
-    icp = o3d.pipelines.registration.registration_icp(
+    # icp
+    icp = o3d.pipelines.registration.registration_generalized_icp(
         source, target, distance_threshold,
         ransac.transformation,
-        o3d.pipelines.registration.TransformationEstimationPointToPlane()
+        o3d.pipelines.registration.TransformationEstimationForGeneralizedICP(),
+        o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=500)
     )
     return icp.transformation
 
-def multiway_register(pcd_list, voxel=0.01):
+def multiway_register(pcd_list, voxel=0.01, verbose=True):
     """Pose-graph global registration + optimization (Open3D)."""
+    if verbose:
+        print("\n=== Multiway Registration ===")
+        print(f"Number of point clouds: {len(pcd_list)}")
+        print(f"Voxel size: {voxel}\n")
+        
     if len(pcd_list) == 1:
         return [np.eye(4)]
 
@@ -225,8 +237,15 @@ def multiway_register(pcd_list, voxel=0.01):
     pose_graph.nodes.append(o3d.pipelines.registration.PoseGraphNode(odometry.copy()))
     edges = []
 
-    # Odometric edges (sequential)
+    if verbose:
+        print("Initialized pose graph with node 0 (identity).\n")
+
+    # --- Sequential Odometry Edges ---
+    if verbose:
+        print("=== Sequential Pairwise Registration ===")
     for i in range(1, len(pcd_list)):
+        if verbose:
+            print(f"\n-- Pair ({i} ← {i-1}) --")
         Ti = register_pair(pcd_list[i], pcd_list[i-1], voxel=voxel)  # i -> i-1
         odometry = Ti @ odometry
         pose_graph.nodes.append(o3d.pipelines.registration.PoseGraphNode(np.linalg.inv(odometry)))
@@ -235,21 +254,29 @@ def multiway_register(pcd_list, voxel=0.01):
         )
         pose_graph.edges.append(o3d.pipelines.registration.PoseGraphEdge(i-1, i, Ti, info, uncertain=False))
         edges.append(((i-1, i), Ti))
+        if verbose:
+            print(f"Added odometric edge ({i-1} → {i})")
 
     # Optional loop closures (sparse): here connect every 3rd frame
-    for i in range(len(pcd_list)):
-        for j in range(i+3, len(pcd_list), 3):
-            Tij = register_pair(pcd_list[j], pcd_list[i], voxel=voxel)
-            info = o3d.pipelines.registration.get_information_matrix_from_point_clouds(
-                pcd_list[j], pcd_list[i], max_correspondence_distance=voxel * 1.5, transformation=Tij
-            )
-            pose_graph.edges.append(o3d.pipelines.registration.PoseGraphEdge(i, j, Tij, info, uncertain=True))
+    # if verbose:
+    #     print("\n=== Loop Closure Edges (every 3rd frame) ===")
+    # for i in range(len(pcd_list)):
+    #     for j in range(i+3, len(pcd_list), 3):
+    #         if verbose:
+    #             print(f"Loop closure: ({i} ↔ {j})")
+    #         Tij = register_pair(pcd_list[j], pcd_list[i], voxel=voxel)
+    #         info = o3d.pipelines.registration.get_information_matrix_from_point_clouds(
+    #             pcd_list[j], pcd_list[i], max_correspondence_distance=voxel * 1.5, transformation=Tij
+    #         )
+    #         pose_graph.edges.append(o3d.pipelines.registration.PoseGraphEdge(i, j, Tij, info, uncertain=True))
 
     option = o3d.pipelines.registration.GlobalOptimizationOption(
-        max_correspondence_distance=voxel * 1.5,
-        edge_prune_threshold=0.25,
+        max_correspondence_distance=voxel * 4,
+        edge_prune_threshold=0.3,
         reference_node=0
     )
+    if verbose:
+        print("\n=== Global Pose Graph Optimization ===")
     o3d.pipelines.registration.global_optimization(
         pose_graph,
         o3d.pipelines.registration.GlobalOptimizationLevenbergMarquardt(),
@@ -258,6 +285,8 @@ def multiway_register(pcd_list, voxel=0.01):
     )
     # Extract optimized poses (world_T_i)
     transforms = [np.linalg.inv(node.pose) for node in pose_graph.nodes]
+    if verbose:
+        print("Generated final transforms for all point clouds.\n")
     return transforms
 
 # file loader
@@ -330,7 +359,6 @@ def run_batch(
         except Exception:
             pass
         
-
         # Reproject to 3D
         pts, cols = disparity_to_points(disp, imgL, Q, valid_mask, z_clip=z_clip, flip_z=False)
         
